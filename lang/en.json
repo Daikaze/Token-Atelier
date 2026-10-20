@@ -1,0 +1,12 @@
+{
+  "TOKEN_ATELIER": {
+    "Title": "Token Atelier",
+    "Button": "Token Atelier",
+    "Setting": {
+      "Folder": {
+        "Name": "Default output folder",
+        "Hint": "Folder inside your Foundry Data directory where exported tokens are saved."
+      }
+    }
+  }
+}

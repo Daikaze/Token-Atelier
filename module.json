@@ -1,0 +1,40 @@
+{
+  "id": "token-atelier",
+  "title": "Token Atelier",
+  "description": "A token maker for actors. Align one piece of art, and the alignment is remembered so alternate art of the same character (other expressions, outfits) lines up the same way.",
+  "version": "0.2.3",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14"
+  },
+  "authors": [
+    {
+      "name": "Vlai"
+    }
+  ],
+  "esmodules": [
+    "scripts/main.js"
+  ],
+  "styles": [
+    "styles/token-atelier.css"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "relationships": {
+    "systems": [
+      {
+        "id": "dnd5e",
+        "type": "system",
+        "compatibility": {}
+      }
+    ]
+  },
+  "url": "https://github.com/Daikaze/Token-Atelier",
+  "manifest": "https://raw.githubusercontent.com/Daikaze/Token-Atelier/main/module.json",
+  "download": "https://raw.githubusercontent.com/Daikaze/Token-Atelier/main/dist/token-atelier.zip"
+}
