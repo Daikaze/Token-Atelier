@@ -1,6 +1,6 @@
 # Token Atelier
 
-A **GM-only** token maker for Foundry VTT v13 and v14 (built for the dnd5e system, ApplicationV2). A v11 build is provided separately. Align one piece of art and the alignment is remembered, so alternate art of the same character lines up the same way.
+A **GM-only** token maker for Foundry VTT v13 and v14 (built for the dnd5e system, ApplicationV2). This repository targets v13/v14. Align one piece of art and the alignment is remembered, so alternate art of the same character lines up the same way.
 
 ## Install directly from GitHub (recommended)
 1. In Foundry VTT **Setup > Add-on Modules > Install Module**, paste this URL in the **Manifest URL** field:
@@ -57,3 +57,14 @@ Existing actor token placement data is stored in Foundry's actor flags and is pr
 ## Changes in 0.2.3
 - Added a GitHub manifest and direct ZIP download URL so Foundry can install/update from the repository.
 - GM-only editing and all fixes from 0.2.2 remain unchanged.
+
+## What's new in v0.2.4
+
+- **Border Presets Library (GM-only)**: save a named visual frame/style preset for the entire Foundry world, apply it to another actor, or delete the preset without modifying already customized actors. Presets intentionally do not change art, alignment, image size, export folder or actor update options. Duplicate names are refused.
+- **Batch Export**: safely export all registered art variants as separate PNG files, including their linked/unlinked alignments. This does not change the actor's token/portrait or active art. Failures of individual images are reported while other items continue.
+- **Safe Save & Backup**: single and batch export check the destination and allocate unique filenames (`name.png`, `name-2.png`, etc.) rather than overwriting. Download the actor's Atelier settings to a JSON backup and restore them later with confirmation and an automatic pre-restore backup download. Restore only replaces this actor's Atelier settings, not token assets or world presets.
+- **Compatibility**: retains actor flag schema `data` (version 1), Foundry V14/13 ApplicationV2, GM-only restrictions, and prior v0.2.3 entry points. Existing designs are not migrated or reset.
+
+### Upgrade / safety notes
+
+Back up your world before upgrading. The new global preset setting is empty until you add presets; existing actor designs remain unchanged. Before any export, Foundry must successfully list the destination folder; if the folder cannot be listed, the export stops rather than risk an overwrite. Batch export does not change the actor's token image; use **Save selected token** for that. Browser-based backup download must be permitted by the browser.

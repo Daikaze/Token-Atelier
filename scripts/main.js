@@ -118,6 +118,100 @@ function loadState(actor) {
   return state;
 }
 
+/** Border presets are global to the world and never replace actor-specific data. */
+const PRESET_STYLE_KEYS = ["mask", "frame", "ringColor", "ringWidth", "bgTransparent", "bgColor", "customFrame"];
+
+function borderStyle(style) {
+  const output = {};
+  for (const key of PRESET_STYLE_KEYS) output[key] = foundry.utils.deepClone(style[key]);
+  return output;
+}
+
+function getBorderPresets() {
+  const presets = game.settings.get(MOD, "borderPresets");
+  return Array.isArray(presets) ? presets.filter(p => p && typeof p.id === "string" && typeof p.name === "string" && p.style && typeof p.style === "object") : [];
+}
+
+/** Build a non-overwriting filename, using a shared set during batch operations. */
+function nextAvailableName(stem, used) {
+  let name = `${stem}.png`;
+  let i = 2;
+  while (used.has(name.toLowerCase())) name = `${stem}-${i++}.png`;
+  used.add(name.toLowerCase());
+  return name;
+}
+
+async function existingFilenames(folder) {
+  // If the folder cannot be read, stop: never risk silently replacing a file.
+  const result = await filePicker().browse("data", folder, {});
+  if (!Array.isArray(result.files)) throw new Error(`Could not list ${folder}`);
+  return new Set(result.files.map(src => {
+    const basename = String(src).split("/").pop().split("?")[0];
+    try { return decodeURIComponent(basename).toLowerCase(); }
+    catch { return basename.toLowerCase(); }
+  }));
+}
+
+function safeTransform(source, defaults = DEFAULT_TF) {
+  const out = { ...defaults };
+  for (const k of ["ox", "oy", "scale", "rot"]) {
+    if (typeof source?.[k] === "number" && Number.isFinite(source[k])) out[k] = source[k];
+  }
+  out.scale = Math.max(0.05, Math.min(6, out.scale));
+  out.rot = Math.max(-180, Math.min(180, out.rot));
+  out.ox = Math.max(-20, Math.min(20, out.ox));
+  out.oy = Math.max(-20, Math.min(20, out.oy));
+  return out;
+}
+
+/** Validate imported JSON against the original v0.2.x state shape. */
+function restoredActorData(source) {
+  if (!source || typeof source !== "object" || !Array.isArray(source.arts) || !source.style || typeof source.style !== "object") {
+    throw new Error("Invalid or incompatible token settings");
+  }
+  const out = defaultState();
+  out.arts = source.arts.slice(0, 250).filter(a => a && typeof a.src === "string" && a.src.length <= 4096 && a.src.length > 0).map(a => ({
+    id: typeof a.id === "string" && a.id.length <= 128 ? a.id : foundry.utils.randomID(),
+    src: a.src,
+    label: typeof a.label === "string" ? a.label.slice(0, 120) : baseName(a.src),
+    linked: a.linked !== false,
+    tf: safeTransform(a.tf)
+  }));
+  out.active = out.arts.some(a => a.id === source.active) ? source.active : out.arts[0]?.id ?? null;
+  out.shared = { ...safeTransform(source.shared), initialized: source.shared?.initialized === true };
+  const st = source.style;
+  if (["circle", "rounded", "square"].includes(st.mask)) out.style.mask = st.mask;
+  if (["ring", "custom", "none"].includes(st.frame)) out.style.frame = st.frame;
+  for (const k of ["ringColor", "bgColor"]) if (typeof st[k] === "string" && /^#[0-9a-f]{6}$/i.test(st[k])) out.style[k] = st[k];
+  if (typeof st.ringWidth === "number" && Number.isFinite(st.ringWidth)) out.style.ringWidth = Math.min(10, Math.max(0, st.ringWidth));
+  if (typeof st.bgTransparent === "boolean") out.style.bgTransparent = st.bgTransparent;
+  if (typeof st.customFrame === "string") out.style.customFrame = st.customFrame.slice(0, 4096);
+  if ([256, 512, 1024].includes(Number(st.size))) out.style.size = Number(st.size);
+  if (typeof st.folder === "string" && st.folder.length < 512 && !/(^|\/)\.\.(\/|$)/.test(st.folder.replaceAll("\\", "/"))) out.style.folder = st.folder;
+  if (typeof st.applyToken === "boolean") out.style.applyToken = st.applyToken;
+  if (typeof st.applyPortrait === "boolean") out.style.applyPortrait = st.applyPortrait;
+  return out;
+}
+
+/** Local-only backup; no game data or token images are modified. */
+function downloadBackup(actor, state) {
+  const payload = {
+    format: "token-atelier-actor-backup", schema: 1,
+    createdAt: new Date().toISOString(), actorId: actor.id, actorName: actor.name,
+    data: foundry.utils.deepClone(state)
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `token-atelier-backup-${slug(actor.name)}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Deferred to avoid cancelling downloads in Firefox.
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
 /* -------------------------------------------- */
 /*  Application                                  */
 /* -------------------------------------------- */
@@ -136,6 +230,9 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this._frameMask = null;
     this._layer = null;
     this._saveTimer = null;
+    this._saveChain = Promise.resolve();
+    this._exporting = false;
+    this._selectedPresetId = "";
     this._drag = null;
     this.canvas = null;
   }
@@ -152,6 +249,12 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
       "pick-frame": TokenAtelierApp.onPickFrame,
       "set-shared": TokenAtelierApp.onSetShared,
       "reset": TokenAtelierApp.onReset,
+      "preset-save": TokenAtelierApp.onSavePreset,
+      "preset-apply": TokenAtelierApp.onApplyPreset,
+      "preset-delete": TokenAtelierApp.onDeletePreset,
+      "backup-download": TokenAtelierApp.onBackupDownload,
+      "backup-restore": TokenAtelierApp.onBackupRestore,
+      "export-all": TokenAtelierApp.onExportAll,
       "export": TokenAtelierApp.onExport
     }
   };
@@ -177,6 +280,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _prepareContext(options) {
     return {
+      presets: getBorderPresets().map(p => ({...p, selected: p.id === this._selectedPresetId})),
       arts: this.atelierData.arts.map(a => ({
         id: a.id,
         label: a.label,
@@ -190,22 +294,27 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   _scheduleSave() {
     clearTimeout(this._saveTimer);
-    this._saveTimer = setTimeout(() => this._save(), 500);
+    this._saveTimer = setTimeout(() => { void this._save().catch(() => {}); }, 500);
   }
 
   async _save() {
     clearTimeout(this._saveTimer);
     this._saveTimer = null;
     if (!isGM() || !this.actor.isOwner) return;
-    try {
-      await this.actor.setFlag(MOD, "data", foundry.utils.deepClone(this.atelierData));
-    } catch (err) {
+    // Serialize writes so a delayed older write cannot overwrite the latest state.
+    const snapshot = foundry.utils.deepClone(this.atelierData);
+    this._saveChain = this._saveChain.catch(() => {}).then(() => this.actor.setFlag(MOD, "data", snapshot));
+    try { await this._saveChain; }
+    catch (err) {
       console.error(`${MOD} | Could not save state`, err);
+      ui.notifications.error("Token Atelier: token settings could not be saved. Check F12 Console.");
+      throw err;
     }
   }
 
   async close(options) {
     if (this._saveTimer) await this._save();
+    await this._saveChain;
     return super.close(options);
   }
 
@@ -258,6 +367,16 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
       this._syncControls();
       this._draw();
       this._scheduleSave();
+    });
+
+    // Global border preset selection is not part of the actor's settings.
+    const presetList = root.querySelector('[name="borderPreset"]');
+    if (presetList) presetList.addEventListener("change", ev => { this._selectedPresetId = ev.currentTarget.value; });
+    const restoreInput = root.querySelector('[name="restoreBackupFile"]');
+    if (restoreInput) restoreInput.addEventListener("change", async ev => {
+      const file = ev.currentTarget.files?.[0];
+      ev.currentTarget.value = "";
+      if (file) await this._restoreBackup(file);
     });
 
     // Art labels
@@ -508,6 +627,96 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     await this._export();
   }
 
+  static async onSavePreset() {
+    if (!isGM()) return;
+    const name = this.element.querySelector('[name="presetName"]')?.value.trim();
+    if (!name || name.length > 70) {
+      ui.notifications.warn("Token Atelier: enter a preset name (1–70 characters).");
+      return;
+    }
+    const presets = getBorderPresets();
+    if (presets.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+      ui.notifications.warn("Token Atelier: a preset with that name already exists. Choose a different name.");
+      return;
+    }
+    const id = foundry.utils.randomID();
+    try {
+      await game.settings.set(MOD, "borderPresets", [...presets, { id, name, style: borderStyle(this.atelierData.style) }]);
+      this._selectedPresetId = id;
+      await this.render({ force: true });
+      ui.notifications.info(`Token Atelier: saved border preset "${name}".`);
+    } catch (err) {
+      console.error(`${MOD} | Preset save failed`, err);
+      ui.notifications.error("Token Atelier: could not save border preset.");
+    }
+  }
+
+  static async onApplyPreset() {
+    if (!isGM()) return;
+    const preset = getBorderPresets().find(p => p.id === this._selectedPresetId);
+    if (!preset) return ui.notifications.warn("Token Atelier: select a preset first.");
+    const defaults = defaultState().style;
+    // Only visual settings change: leave export size, folder, save flags, art and alignments unchanged.
+    for (const key of PRESET_STYLE_KEYS) {
+      if (Object.hasOwn(preset.style, key)) this.atelierData.style[key] = foundry.utils.deepClone(preset.style[key]);
+      else this.atelierData.style[key] = defaults[key];
+    }
+    await this._save();
+    await this.render({ force: true });
+    ui.notifications.info(`Token Atelier: applied preset "${preset.name}".`);
+  }
+
+  static async onDeletePreset() {
+    if (!isGM()) return;
+    const preset = getBorderPresets().find(p => p.id === this._selectedPresetId);
+    if (!preset) return ui.notifications.warn("Token Atelier: select a preset first.");
+    if (!window.confirm(`Delete border preset "${preset.name}"? Existing token designs will not change.`)) return;
+    try {
+      await game.settings.set(MOD, "borderPresets", getBorderPresets().filter(p => p.id !== preset.id));
+      this._selectedPresetId = "";
+      await this.render({ force: true });
+      ui.notifications.info("Token Atelier: preset deleted (actor designs were not changed).");
+    } catch (err) {
+      console.error(`${MOD} | Preset deletion failed`, err);
+      ui.notifications.error("Token Atelier: could not delete the preset.");
+    }
+  }
+
+  static onBackupDownload() {
+    if (!isGM() || !this.actor.isOwner) return;
+    downloadBackup(this.actor, this.atelierData);
+    ui.notifications.info("Token Atelier: token settings backup downloaded as JSON.");
+  }
+
+  static onBackupRestore() {
+    if (!isGM() || !this.actor.isOwner) return;
+    this.element.querySelector('[name="restoreBackupFile"]')?.click();
+  }
+
+  async _restoreBackup(file) {
+    if (!isGM() || !this.actor.isOwner) return;
+    try {
+      if (file.size > 2_000_000) throw new Error("Backup exceeds 2MB safety limit");
+      const payload = JSON.parse(await file.text());
+      if (payload?.format !== "token-atelier-actor-backup" || payload.schema !== 1) throw new Error("Not a Token Atelier actor backup");
+      const restored = restoredActorData(payload.data);
+      const from = payload.actorName || "unknown actor";
+      if (!window.confirm(`Restore Token Atelier settings from "${from}" to "${this.actor.name}"?\nYour current design will first be downloaded as a safety backup. The token PNG and portrait will not be changed.`)) return;
+      // Download the current design BEFORE overwriting actor flags. Abort if backup fails.
+      downloadBackup(this.actor, this.atelierData);
+      this.atelierData = restored;
+      try { await this._save(); }
+      catch (err) { this.atelierData = loadState(this.actor); throw err; }
+      await this.render({ force: true });
+      ui.notifications.info("Token Atelier: settings restored. Previous settings downloaded as a backup.");
+    } catch (err) {
+      console.error(`${MOD} | Backup restore failed`, err);
+      ui.notifications.error(`Token Atelier: restore failed (${err.message}). Current settings were not intentionally replaced.`);
+    }
+  }
+
+  static async onExportAll() { await this._exportAll(); }
+
   _addArt(src) {
     const art = {
       id: foundry.utils.randomID(),
@@ -542,24 +751,22 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
 
-  _paintArt(ctx, S, st) {
+  _paintArt(ctx, S, st, image = this._img, tf = this.tf) {
     if (!st.bgTransparent) {
       ctx.fillStyle = st.bgColor;
       ctx.fillRect(0, 0, S, S);
     }
-    if (!this._img) return;
-    const tf = this.tf;
+    if (!image) return;
     const w = tf.scale * S;
-    const h = w * (this._img.naturalHeight / this._img.naturalWidth);
+    const h = w * (image.naturalHeight / image.naturalWidth);
     ctx.save();
     ctx.translate(S / 2 + tf.ox * S, S / 2 + tf.oy * S);
     ctx.rotate((tf.rot * Math.PI) / 180);
-    ctx.drawImage(this._img, -w / 2, -h / 2, w, h);
+    ctx.drawImage(image, -w / 2, -h / 2, w, h);
     ctx.restore();
   }
 
-  _draw() {
-    const canvas = this.canvas;
+  _draw(canvas = this.canvas, image = this._img, tf = this.tf) {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const S = canvas.width;
@@ -573,7 +780,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
       layer.width = layer.height = S;
       const lctx = layer.getContext("2d");
       lctx.clearRect(0, 0, S, S);
-      this._paintArt(lctx, S, st);
+      this._paintArt(lctx, S, st, image, tf);
       lctx.globalCompositeOperation = "destination-in";
       lctx.drawImage(this._frameMask, 0, 0);
       lctx.globalCompositeOperation = "source-over";
@@ -582,7 +789,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
       ctx.save();
       this._maskPath(ctx, S, st.mask);
       ctx.clip();
-      this._paintArt(ctx, S, st);
+      this._paintArt(ctx, S, st, image, tf);
       ctx.restore();
     }
 
@@ -601,54 +808,98 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   /* ---------- export ---------- */
 
+  /** Save an image to Foundry without overwriting an existing filename. */
+  async _uploadToken(blob, folder, stem, usedNames) {
+    const name = nextAvailableName(stem, usedNames);
+    const file = new File([blob], name, { type: "image/png" });
+    const response = await filePicker().upload("data", folder, file, {}, { notify: false });
+    if (!response?.path) throw new Error(`Upload returned no path for ${name}`);
+    return response.path;
+  }
+
+  async _pngBlob(canvas) {
+    return new Promise((resolve, reject) => {
+      try { canvas.toBlob(b => (b ? resolve(b) : reject(new Error("Empty image"))), "image/png"); }
+      catch (err) { reject(err); }
+    });
+  }
+
   async _export() {
-    if (!isGM()) {
-      ui.notifications.warn("Token Atelier is available only to Game Masters.");
-      return;
-    }
+    if (this._exporting) return ui.notifications.warn("Token Atelier: another export is already running.");
+    if (!isGM() || !this.actor.isOwner) return ui.notifications.warn("Token Atelier is for Game Masters only.");
     const art = this.art;
-    if (!art || !this._img) {
-      ui.notifications.warn("Token Atelier: add and select some art first.");
-      return;
-    }
-    if (!game.user.can("FILES_UPLOAD")) {
-      ui.notifications.error("Token Atelier: you do not have permission to upload files.");
-      return;
-    }
-    const st = this.atelierData.style;
-    this._draw();
+    if (!art || !this._img) return ui.notifications.warn("Token Atelier: add and select some art first.");
+    if (!game.user.can("FILES_UPLOAD")) return ui.notifications.error("Token Atelier: file upload permission is required.");
 
-    let blob;
+    this._exporting = true;
     try {
-      blob = await new Promise((resolve, reject) => {
-        this.canvas.toBlob(b => (b ? resolve(b) : reject(new Error("Empty image"))), "image/png");
-      });
-    } catch (err) {
-      console.error(`${MOD} | Export failed`, err);
-      ui.notifications.error("Token Atelier: could not export. Images hosted outside Foundry can block this; copy the art into your Foundry data folder.");
-      return;
-    }
-
-    try {
+      const st = this.atelierData.style;
       const folder = (st.folder || "").trim().replace(/^\/+|\/+$/g, "") || "token-atelier";
       await ensureFolder(folder);
-      const name = `${slug(this.actor.name, "actor")}-${slug(art.label, "art")}.png`;
-      const file = new File([blob], name, { type: "image/png" });
-      const response = await filePicker().upload("data", folder, file, {}, { notify: false });
-      if (!response?.path) throw new Error("Upload returned no path");
-
+      const usedNames = await existingFilenames(folder);
+      this._draw();
+      const blob = await this._pngBlob(this.canvas);
+      const stem = `${slug(this.actor.name, "actor")}-${slug(art.label, "art")}`;
+      const path = await this._uploadToken(blob, folder, stem, usedNames);
       const update = {};
-      if (st.applyToken) update["prototypeToken.texture.src"] = response.path;
-      if (st.applyPortrait) update.img = response.path;
+      if (st.applyToken) update["prototypeToken.texture.src"] = path;
+      if (st.applyPortrait) update.img = path;
       if (Object.keys(update).length) await this.actor.update(update);
-
       await this._save();
-      ui.notifications.info(`Token Atelier: saved ${response.path}`);
+      ui.notifications.info(`Token Atelier: safely saved ${path}`);
     } catch (err) {
-      console.error(`${MOD} | Upload failed`, err);
-      ui.notifications.error("Token Atelier: could not save the token. Check the console for details.");
+      console.error(`${MOD} | Single export failed`, err);
+      ui.notifications.error("Token Atelier: save failed (no existing files intentionally overwritten). Check F12 Console.");
+    } finally {
+      this._exporting = false;
     }
   }
+
+  /** Export all art variants; never change the actor's portrait, token or active art. */
+  async _exportAll() {
+    if (this._exporting) return ui.notifications.warn("Token Atelier: another export is already running.");
+    if (!isGM() || !this.actor.isOwner) return ui.notifications.warn("Token Atelier is for Game Masters only.");
+    if (!game.user.can("FILES_UPLOAD")) return ui.notifications.error("Token Atelier: file upload permission is required.");
+    const arts = [...this.atelierData.arts];
+    if (!arts.length) return ui.notifications.warn("Token Atelier: add some art first.");
+    this._exporting = true;
+    try {
+    const st = this.atelierData.style;
+    const folder = (st.folder || "").trim().replace(/^\/+|\/+$/g, "") || "token-atelier";
+    let usedNames;
+    try {
+      await ensureFolder(folder);
+      usedNames = await existingFilenames(folder);
+    } catch (err) {
+      console.error(`${MOD} | Could not check existing files`, err);
+      return ui.notifications.error("Token Atelier: cannot inspect destination folder. Batch export stopped to protect existing files.");
+    }
+
+    const temp = document.createElement("canvas");
+    temp.width = temp.height = this.canvas.width;
+    let saved = 0;
+    const failures = [];
+    for (const art of arts) {
+      try {
+        const image = await loadImage(art.src);
+        const tf = art.linked ? this.atelierData.shared : art.tf;
+        this._draw(temp, image, tf);
+        const blob = await this._pngBlob(temp);
+        await this._uploadToken(blob, folder, `${slug(this.actor.name, "actor")}-${slug(art.label, "art")}`, usedNames);
+        saved++;
+      } catch (err) {
+        failures.push(art.label);
+        console.error(`${MOD} | Batch export failed for ${art.label}`, err);
+      }
+    }
+    // No actor.update: batch export is deliberately non-destructive.
+    if (failures.length) ui.notifications.warn(`Token Atelier: exported ${saved}/${arts.length}. Failed: ${failures.slice(0, 5).join(", ")}. See Console.`);
+    else ui.notifications.info(`Token Atelier: exported all ${saved} images safely to ${folder}. Actor token was not changed.`);
+    } finally {
+      this._exporting = false;
+    }
+  }
+
 }
 
 /* -------------------------------------------- */
@@ -693,6 +944,14 @@ Hooks.once("init", () => {
     config: true,
     type: String,
     default: "token-atelier"
+  });
+  game.settings.register(MOD, "borderPresets", {
+    name: "Shared border presets",
+    hint: "GM-managed border templates shared in this world.",
+    scope: "world",
+    config: false,
+    type: Array,
+    default: []
   });
   game.modules.get(MOD).api = { open: openAtelier };
 });

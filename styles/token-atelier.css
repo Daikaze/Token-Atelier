@@ -37,3 +37,12 @@
 
 /* ApplicationV2 window tweaks */
 .token-atelier .window-content { padding: 8px; overflow: auto; }
+
+/* v0.2.4 controls: isolated from core canvas interaction. */
+.token-atelier .tka-description { font-size: 11px; opacity: .78; margin: 2px 0 7px; line-height: 1.35; }
+.token-atelier .tka-presets h3 small { font-size: 10px; font-weight: normal; opacity: .7; }
+.token-atelier .tka-danger { color: var(--color-text-danger, #c55); }
+.token-atelier .tka-hidden-file { display: none !important; }
+.token-atelier .tka-right section { margin-bottom: 10px; }
+.token-atelier .tka-row { flex-wrap: wrap; }
+.token-atelier .tka-row button { min-width: 0; white-space: normal; }

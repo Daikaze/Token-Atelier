@@ -82,6 +82,41 @@
       </div>
     </section>
 
+    <section class="tka-presets">
+      <h3>Border Presets Library <small>(world / GM)</small></h3>
+      <p class="tka-description">Presets save the frame, shape, colors and background. Art, alignment and export options stay untouched.</p>
+      <div class="tka-field">
+        <label>Preset</label>
+        <select name="borderPreset">
+          <option value="">Choose a saved preset</option>
+          {{#each presets}}
+          <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+          {{/each}}
+        </select>
+      </div>
+      <div class="tka-row">
+        <button type="button" data-action="preset-apply"><i class="fas fa-paint-brush"></i> Apply</button>
+        <button type="button" data-action="preset-delete" class="tka-danger"><i class="fas fa-trash"></i> Delete</button>
+      </div>
+      <div class="tka-field">
+        <label>New name</label>
+        <input name="presetName" type="text" maxlength="70" placeholder="e.g. Celestial Gold">
+      </div>
+      <div class="tka-row">
+        <button type="button" data-action="preset-save"><i class="fas fa-bookmark"></i> Save current border as new preset</button>
+      </div>
+    </section>
+
+    <section class="tka-backup">
+      <h3>Safe Save &amp; Backup</h3>
+      <p class="tka-description">Exports use unique filenames instead of overwriting existing PNGs. Backups save this actor's Token Atelier settings as JSON.</p>
+      <div class="tka-row">
+        <button type="button" data-action="backup-download"><i class="fas fa-download"></i> Download backup</button>
+        <button type="button" data-action="backup-restore"><i class="fas fa-file-import"></i> Restore backup</button>
+        <input name="restoreBackupFile" type="file" accept=".json,application/json" class="tka-hidden-file" tabindex="-1">
+      </div>
+    </section>
+
     <section>
       <h3>Export</h3>
       <div class="tka-field">
@@ -103,8 +138,10 @@
         <label><input type="checkbox" data-bind="style.applyPortrait"> Also set as the actor's portrait</label>
       </div>
       <div class="tka-row">
-        <button type="button" class="tka-primary" data-action="export"><i class="fas fa-save"></i> Save token</button>
+        <button type="button" class="tka-primary" data-action="export"><i class="fas fa-save"></i> Save selected token</button>
+        <button type="button" data-action="export-all"><i class="fas fa-layer-group"></i> Export all arts</button>
       </div>
+      <p class="tka-description">Batch export creates PNGs only; it does not change the actor portrait or token image.</p>
     </section>
   </div>
 </div>
