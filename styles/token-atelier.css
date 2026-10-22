@@ -46,3 +46,8 @@
 .token-atelier .tka-right section { margin-bottom: 10px; }
 .token-atelier .tka-row { flex-wrap: wrap; }
 .token-atelier .tka-row button { min-width: 0; white-space: normal; }
+
+/* Bulk import controls; scoped to Token Atelier to avoid module/CSS conflicts. */
+.token-atelier .tka-bulk-import { margin-top: 8px; border-top: 1px solid var(--color-border-dark-4, #555); padding-top: 4px; }
+.token-atelier .tka-bulk-import h4 { font-size: 13px; margin: 4px 0 2px; }
+.token-atelier .tka-bulk-import .tka-row button { line-height: 1.2; min-height: 34px; }

@@ -67,7 +67,7 @@ const ctx={
 };
 vm.createContext(ctx);
 vm.runInContext('String.prototype.slugify = function(){return this.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")};',ctx);
-vm.runInContext(code + '\n;globalThis.TEST = {TokenAtelierApp,defaultState,restoredActorData,nextAvailableName,existingFilenames};',ctx);
+vm.runInContext(code + '\n;globalThis.TEST = {TokenAtelierApp,defaultState,restoredActorData,nextAvailableName,existingFilenames,planArtImport,uniqueImageFilename,isImportableImage};',ctx);
 const {TokenAtelierApp: App, defaultState, restoredActorData}=ctx.TEST;
 const tasks=[];
 function test(label,cb){tasks.push([label,cb]);}
@@ -208,6 +208,81 @@ test('Serialized saves avoid old snapshot races',async()=>{
   const two=app._save();
   await Promise.all([one,two]);
   assert.equal(flags.get('data').style.ringColor,'#000002');
+});
+
+test('Bulk import validates extensions, eliminates duplicate paths, enforces 250 image limit',async()=>{
+  const {planArtImport,uniqueImageFilename,isImportableImage}=ctx.TEST;
+  assert.equal(isImportableImage('folder/a.PNG?query=x'),true);
+  assert.equal(isImportableImage('folder/file.txt'),false);
+  const base=[{src:'folder/old.png'}];
+  const plan=planArtImport(['folder/old.png','folder/NEW.webp','folder/new.webp','folder/manual.pdf','folder/final.jpg'],base,3);
+  assert.equal(plan.accepted.length,2);
+  assert.equal(plan.skipped,2);
+  assert.equal(plan.invalid,1);
+  const full=planArtImport(['folder/x.jpg'],base,1);
+  assert.equal(full.overLimit,1);
+  const used = new Set(['portrait.png']);
+  assert.equal(uniqueImageFilename('Portrait.PNG',used),'portrait-2.png');
+  assert.equal(uniqueImageFilename('Portrait.PNG',used),'portrait-3.png');
+});
+
+test('Bulk folder import adds new arts once, preserves active/current style, duplicate-safe on repeat',async()=>{
+  const app = new App(actor);
+  const wasActive=app.atelierData.active;
+  const wasShared=copies(app.atelierData.shared);
+  const wasStyle=copies(app.atelierData.style);
+  const beforeUploads=uploads.length;
+  const beforeUpdates=actor.updates.length;
+  const first=app.atelierData.arts.length;
+  existing.set('gallery',['hero-new.png','hero-new.webp','notes.txt','hero-new.PNG']);
+  await app._bulkImportFolder('gallery');
+  assert.equal(app.atelierData.arts.length,first+2);
+  assert.equal(flags.get('data').arts.length,first+2);
+  assert.equal(app.atelierData.active,wasActive);
+  assert.deepEqual(app.atelierData.shared,wasShared);
+  assert.deepEqual(app.atelierData.style,wasStyle);
+  assert.equal(uploads.length,beforeUploads);
+  assert.equal(actor.updates.length,beforeUpdates);
+  await app._bulkImportFolder('gallery');
+  assert.equal(app.atelierData.arts.length,first+2);
+});
+
+test('Bulk folder import skips malformed, unreadable and unsupported files without destroying actor data',async()=>{
+  const app=new App(actor);
+  const old=copies(app.atelierData);
+  await app._bulkImportFolder('../etc');
+  browsable=false;
+  await app._bulkImportFolder('badfolder');
+  browsable=true;
+  assert.deepEqual(app.atelierData,old);
+  assert.equal(app._importing,false);
+});
+
+test('Bulk upload safely names source files, adds images and does not replace token',async()=>{
+  const app = new App(actor);
+  const beforeArt=app.atelierData.arts.length;
+  const beforeUpdates=actor.updates.length;
+  const beforeUpload=uploads.length;
+  const files=[
+    new MockFile(['data'],'Face.png',{type:'image/png'}),
+    new MockFile(['data'],'Face.png',{type:'image/png'}),
+    new MockFile(['data'],'Pose.webp',{type:'image/webp'}),
+    new MockFile(['data'],'readme.txt',{type:'text/plain'})
+  ];
+  await app._bulkUploadFiles(files);
+  assert.equal(uploads.length-beforeUpload,2);
+  assert.equal(app.atelierData.arts.length-beforeArt,2);
+  assert.equal(new Set(uploads.slice(beforeUpload).map(x=>x.name)).size,2);
+  assert.equal(actor.updates.length,beforeUpdates);
+  assert.ok(uploads.slice(beforeUpload).every(x=>x.folder.includes('source-art/hero-test123')));
+  const saved=app.atelierData.arts.length;
+  await app._bulkUploadFiles([files[0]]);
+  assert.equal(app.atelierData.arts.length,saved);
+  gm=false;
+  await app._bulkImportFolder('gallery');
+  await app._bulkUploadFiles(files);
+  assert.equal(app.atelierData.arts.length,saved);
+  gm=true;
 });
 
 (async()=>{

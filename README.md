@@ -68,3 +68,12 @@ Existing actor token placement data is stored in Foundry's actor flags and is pr
 ### Upgrade / safety notes
 
 Back up your world before upgrading. The new global preset setting is empty until you add presets; existing actor designs remain unchanged. Before any export, Foundry must successfully list the destination folder; if the folder cannot be listed, the export stops rather than risk an overwrite. Batch export does not change the actor's token image; use **Save selected token** for that. Browser-based backup download must be permitted by the browser.
+
+
+## New in v0.2.5 — Bulk Import
+
+- **Import Foundry folder:** In the actor's **Art > Bulk Import**, choose **Import Foundry folder** and select a folder in your **Foundry Data** directory. Every PNG, JPG, JPEG, WebP, GIF, or AVIF image directly inside that folder is added as an art variant. Subfolders and unrelated files are ignored; no images are uploaded or moved.
+- **Upload multiple images:** Choose **Upload multiple images** and select several image files from your computer in one go. The module uploads source images into `<export folder>/source-art/<actor-name>-<actor-id>/`, using collision-safe filenames, then adds them to the actor's art list.
+- Both options are **GM only**, preserve existing images, the selected art, border presets and shared/individual alignments, and save actor data once per import. A maximum of 250 images per actor matches the existing backup restore limit.
+- Bulk Import does **not** replace the actor portrait, token, or any exported PNG. Previously imported Foundry paths are skipped. You can still use **Export all arts** to render the tokens afterward.
+- If folder browsing or uploads fail, existing imported art is not removed, and the error is shown in Foundry notifications and the F12 console.

@@ -60,6 +60,58 @@ function slug(text, fallback = "token") {
   return s || fallback;
 }
 
+/** Bulk imports accept common raster formats supported by Foundry's image browser. */
+const IMPORT_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
+const MAX_ARTS_PER_ACTOR = 250; // Matches the existing JSON backup restore limit.
+
+function imageFilename(path) {
+  const tail = String(path ?? "").split(/[?#]/, 1)[0].split("/").pop() || "";
+  try { return decodeURIComponent(tail); }
+  catch { return tail; }
+}
+
+function isImportableImage(path) {
+  const ext = imageFilename(path).match(/\.([^.]+)$/)?.[1]?.toLowerCase();
+  return IMPORT_EXTENSIONS.has(ext);
+}
+
+function artSourceKey(path) {
+  const src = String(path ?? "").trim();
+  try { return decodeURIComponent(src).toLowerCase(); }
+  catch { return src.toLowerCase(); }
+}
+
+/** Keep imported image names intact where safe, but never overwrite existing assets. */
+function uniqueImageFilename(original, used) {
+  const filename = imageFilename(original);
+  const ext = filename.match(/\.([^.]+)$/)?.[1]?.toLowerCase();
+  if (!IMPORT_EXTENSIONS.has(ext)) throw new Error(`Unsupported image file: ${filename}`);
+  const stem = slug(filename.slice(0, -(ext.length + 1)), "image").slice(0, 95);
+  let candidate = `${stem}.${ext}`;
+  let suffix = 2;
+  while (used.has(candidate.toLowerCase())) candidate = `${stem}-${suffix++}.${ext}`;
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+/** Pure import plan; existing actor art is never discarded or modified. */
+function planArtImport(paths, existingArts, limit = MAX_ARTS_PER_ACTOR) {
+  const seen = new Set(existingArts.map(a => artSourceKey(a.src)));
+  const accepted = [];
+  let skipped = 0;
+  let invalid = 0;
+  let overLimit = 0;
+  for (const src of paths) {
+    if (typeof src !== "string" || !isImportableImage(src)) { invalid++; continue; }
+    const key = artSourceKey(src);
+    if (seen.has(key)) { skipped++; continue; }
+    if (existingArts.length + accepted.length >= limit) { overLimit++; continue; }
+    seen.add(key);
+    accepted.push(src);
+  }
+  return { accepted, skipped, invalid, overLimit };
+}
+
 /** Cover-fit transform: fills the canvas; tall images are aligned to the top (where faces usually are). */
 function fitTransform(img) {
   const ar = img.naturalHeight / img.naturalWidth;
@@ -232,6 +284,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this._saveTimer = null;
     this._saveChain = Promise.resolve();
     this._exporting = false;
+    this._importing = false;
     this._selectedPresetId = "";
     this._drag = null;
     this.canvas = null;
@@ -244,6 +297,8 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     actions: {
       "select-art": TokenAtelierApp.onSelectArt,
       "add-art": TokenAtelierApp.onAddArt,
+      "bulk-folder": TokenAtelierApp.onBulkFolder,
+      "bulk-upload": TokenAtelierApp.onBulkUpload,
       "add-portrait": TokenAtelierApp.onAddPortrait,
       "remove-art": TokenAtelierApp.onRemoveArt,
       "pick-frame": TokenAtelierApp.onPickFrame,
@@ -372,6 +427,14 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // Global border preset selection is not part of the actor's settings.
     const presetList = root.querySelector('[name="borderPreset"]');
     if (presetList) presetList.addEventListener("change", ev => { this._selectedPresetId = ev.currentTarget.value; });
+    const bulkFilesInput = root.querySelector('[name="bulkArtFiles"]');
+    if (bulkFilesInput) bulkFilesInput.addEventListener("change", async ev => {
+      const input = ev.currentTarget;
+      const files = Array.from(input.files || []);
+      input.value = "";
+      if (files.length) await this._bulkUploadFiles(files);
+    });
+
     const restoreInput = root.querySelector('[name="restoreBackupFile"]');
     if (restoreInput) restoreInput.addEventListener("change", async ev => {
       const file = ev.currentTarget.files?.[0];
@@ -572,6 +635,131 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const FP = filePicker();
     new FP({ type: "image", callback: path => this._addArt(path) }).browse()
       .catch(err => { console.error(`${MOD} | Art picker failed`, err); ui.notifications.error("Token Atelier: could not open the art browser."); });
+  }
+
+  /** Import every supported image in ONE selected Foundry Data folder. No uploads. */
+  static onBulkFolder() {
+    if (!isGM() || !this.actor.isOwner) return;
+    if (this._importing) return ui.notifications.warn("Token Atelier: an import is already running.");
+    const FP = filePicker();
+    new FP({
+      type: "folder", activeSource: "data",
+      callback: folder => { void this._bulkImportFolder(folder); }
+    }).browse().catch(err => {
+      console.error(`${MOD} | Bulk folder picker failed`, err);
+      ui.notifications.error("Token Atelier: could not open the folder browser.");
+    });
+  }
+
+  /** Choose multiple local pictures using a native multiple-file input. */
+  static onBulkUpload() {
+    if (!isGM() || !this.actor.isOwner) return;
+    if (this._importing) return ui.notifications.warn("Token Atelier: an import is already running.");
+    if (!game.user.can("FILES_UPLOAD")) return ui.notifications.error("Token Atelier: file upload permission is required.");
+    this.element.querySelector('[name="bulkArtFiles"]')?.click();
+  }
+
+  /** Append once, save once, and retain the selected art and every saved alignment. */
+  async _appendBulkArts(paths, details = "") {
+    if (!isGM() || !this.actor.isOwner) return;
+    const plan = planArtImport(paths, this.atelierData.arts);
+    if (!plan.accepted.length) {
+      ui.notifications.warn(`Token Atelier: no new images imported (${plan.skipped} duplicates, ${plan.invalid} unsupported, ${plan.overLimit} over limit).`);
+      return plan;
+    }
+    const beforeArts = this.atelierData.arts;
+    const beforeActive = this.atelierData.active;
+    const added = plan.accepted.map(src => ({
+      id: foundry.utils.randomID(), src, label: baseName(src), linked: true, tf: { ...DEFAULT_TF }
+    }));
+    this.atelierData.arts = [...beforeArts, ...added];
+    if (!this.atelierData.active) this.atelierData.active = added[0].id;
+    try {
+      await this._save();
+    } catch (err) {
+      this.atelierData.arts = beforeArts;
+      this.atelierData.active = beforeActive;
+      throw err;
+    }
+    await this.render({ force: true });
+    ui.notifications.info(`Token Atelier: imported ${added.length} art(s)${details ? ` ${details}` : ""}; skipped ${plan.skipped} duplicate(s), ${plan.invalid} unsupported, ${plan.overLimit} over limit.`);
+    return plan;
+  }
+
+  async _bulkImportFolder(folder) {
+    if (!isGM() || !this.actor.isOwner) return;
+    if (this._importing) return ui.notifications.warn("Token Atelier: an import is already running.");
+    if (typeof folder !== "string" || !folder.trim() || /(^|\/)\.\.(\/|$)/.test(folder.replaceAll("\\", "/"))) {
+      return ui.notifications.error("Token Atelier: invalid source folder.");
+    }
+    this._importing = true;
+    try {
+      const result = await filePicker().browse("data", folder, {});
+      if (!Array.isArray(result?.files)) throw new Error("Folder could not be listed");
+      // Only direct children, not subfolders. Sorting makes bulk import repeatable.
+      const paths = result.files.filter(path => typeof path === "string" && isImportableImage(path))
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+      const unsupported = result.files.length - paths.length;
+      const plan = await this._appendBulkArts(paths, `from ${folder}`);
+      if (unsupported) ui.notifications.info(`Token Atelier: ${unsupported} non-image file(s) ignored in the folder.`);
+      return plan;
+    } catch (err) {
+      console.error(`${MOD} | Folder bulk import failed`, err);
+      ui.notifications.error("Token Atelier: folder import failed. Existing art was kept. Check F12 Console.");
+    } finally { this._importing = false; }
+  }
+
+  async _bulkUploadFiles(files) {
+    if (!isGM() || !this.actor.isOwner) return;
+    if (this._importing) return ui.notifications.warn("Token Atelier: an import is already running.");
+    if (!game.user.can("FILES_UPLOAD")) return ui.notifications.error("Token Atelier: file upload permission is required.");
+    this._importing = true;
+    try {
+      const supported = files.filter(file => isImportableImage(file?.name));
+      const invalid = files.length - supported.length;
+      const availableSlots = MAX_ARTS_PER_ACTOR - this.atelierData.arts.length;
+      if (availableSlots <= 0) return ui.notifications.warn("Token Atelier: this actor already has the maximum of 250 images.");
+      // This lives under the output folder, but never mixes source art with exported token PNGs.
+      const base = (this.atelierData.style.folder || "").trim().replace(/^\/+|\/+$/g, "") || "token-atelier";
+      const folder = `${base}/source-art/${slug(this.actor.name, "actor")}-${this.actor.id}`;
+      if (/(^|\/)\.\.(\/|$)/.test(folder.replaceAll("\\", "/"))) throw new Error("Invalid upload folder");
+      await ensureFolder(folder);
+      // Fail closed on missing folder access so nothing is accidentally overwritten.
+      const existing = await existingFilenames(folder);
+      const alreadyImported = new Set(this.atelierData.arts.map(a => artSourceKey(a.src)));
+      const paths = [];
+      const failures = [];
+      let skipped = 0;
+      const room = Math.max(0, MAX_ARTS_PER_ACTOR - this.atelierData.arts.length);
+      for (const file of supported) {
+        if (paths.length >= room) break;
+        // Re-selecting an already imported source filename doesn't create duplicates.
+        const original = imageFilename(file.name);
+        const ext = original.match(/\.([^.]+)$/)?.[1]?.toLowerCase();
+        const normalizedName = `${slug(original.slice(0, -(ext.length + 1)), "image").slice(0, 95)}.${ext}`;
+        const expectedPath = `${folder}/${normalizedName}`;
+        if (alreadyImported.has(artSourceKey(expectedPath))) { skipped++; continue; }
+        try {
+          const safeName = uniqueImageFilename(file.name, existing);
+          const uploadFile = safeName === file.name ? file : new File([file], safeName, { type: file.type || "application/octet-stream" });
+          const response = await filePicker().upload("data", folder, uploadFile, {}, { notify: false });
+          if (!response?.path) throw new Error(`No upload path returned for ${safeName}`);
+          paths.push(response.path);
+          alreadyImported.add(artSourceKey(response.path));
+        } catch (err) {
+          console.error(`${MOD} | Could not upload ${file.name}`, err);
+          failures.push(file.name);
+        }
+      }
+      if (paths.length) await this._appendBulkArts(paths, `from your computer`);
+      else ui.notifications.warn("Token Atelier: no new images were uploaded.");
+      if (failures.length || invalid || skipped || supported.length > room) {
+        ui.notifications.warn(`Token Atelier: skipped ${invalid} unsupported, ${skipped} already imported, ${Math.max(0, supported.length - room)} over limit; ${failures.length} upload(s) failed.`);
+      }
+    } catch (err) {
+      console.error(`${MOD} | Bulk upload failed`, err);
+      ui.notifications.error("Token Atelier: bulk upload failed. Existing art was kept. Check F12 Console.");
+    } finally { this._importing = false; }
   }
 
   static onAddPortrait() {

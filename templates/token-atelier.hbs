@@ -40,6 +40,15 @@
         <button type="button" data-action="add-art"><i class="fas fa-plus"></i> Add art</button>
         <button type="button" data-action="add-portrait"><i class="fas fa-user"></i> Use portrait</button>
       </div>
+      <div class="tka-bulk-import">
+        <h4>Bulk Import</h4>
+        <p class="tka-description">Add several art variants at once. Existing images and alignment stay unchanged. Up to 250 images per actor.</p>
+        <div class="tka-row">
+          <button type="button" data-action="bulk-folder" title="Add all supported images in a Foundry Data folder (not subfolders)"><i class="fas fa-folder-open"></i> Import Foundry folder</button>
+          <button type="button" data-action="bulk-upload" title="Choose multiple images on your computer, upload, and import"><i class="fas fa-images"></i> Upload multiple images</button>
+          <input type="file" name="bulkArtFiles" accept=".png,.jpg,.jpeg,.webp,.gif,.avif,image/png,image/jpeg,image/webp,image/gif,image/avif" multiple class="tka-hidden-file" tabindex="-1">
+        </div>
+      </div>
     </section>
 
     <section>
