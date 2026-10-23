@@ -20,6 +20,31 @@ const isGM = () => game.user?.isGM === true;
 const DEFAULT_TF = { ox: 0, oy: 0, scale: 1, rot: 0 };
 const imageCache = new Map();
 
+/** GM-owned free workspace; this never creates or changes an Actor. */
+function createWorkspaceActor() {
+  if (!isGM()) throw new Error("Token Atelier workspace is GM-only.");
+  return {
+    id: `workspace-${game.user.id}`, name: "Workspace", img: "",
+    isOwner: true, isTokenAtelierWorkspace: true,
+    getFlag(scope, key) {
+      return scope === MOD && key === "data" ? game.user.getFlag(MOD, "workspaceData") : undefined;
+    },
+    setFlag(scope, key, value) {
+      if (scope !== MOD || key !== "data") throw new Error("Invalid workspace storage key");
+      return game.user.setFlag(MOD, "workspaceData", value);
+    }
+  };
+}
+
+/** Actor image flags must never apply to an actor-free workspace. */
+function protectWorkspaceState(actor, state) {
+  if (actor.isTokenAtelierWorkspace) {
+    state.style.applyToken = false;
+    state.style.applyPortrait = false;
+  }
+  return state;
+}
+
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 /** The FilePicker implementation (namespaced in v13+). */
@@ -276,7 +301,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this.actor = actor;
     // ApplicationV2.state is a read-only render lifecycle getter in Foundry 13/14.
     // Keep our editable token data under a separate property.
-    this.atelierData = loadState(actor);
+    this.atelierData = protectWorkspaceState(actor, loadState(actor));
     this._img = null;
     this._frameImg = null;
     this._frameMask = null;
@@ -322,6 +347,10 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     return `${game.i18n.localize("TOKEN_ATELIER.Title")}: ${this.actor.name}`;
   }
 
+  get isWorkspace() {
+    return this.actor.isTokenAtelierWorkspace === true;
+  }
+
   get art() {
     return this.atelierData.arts.find(a => a.id === this.atelierData.active) ?? null;
   }
@@ -335,6 +364,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   async _prepareContext(options) {
     return {
+      workspace: this.isWorkspace,
       presets: getBorderPresets().map(p => ({...p, selected: p.id === this._selectedPresetId})),
       arts: this.atelierData.arts.map(a => ({
         id: a.id,
@@ -357,7 +387,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this._saveTimer = null;
     if (!isGM() || !this.actor.isOwner) return;
     // Serialize writes so a delayed older write cannot overwrite the latest state.
-    const snapshot = foundry.utils.deepClone(this.atelierData);
+    const snapshot = foundry.utils.deepClone(protectWorkspaceState(this.actor, this.atelierData));
     this._saveChain = this._saveChain.catch(() => {}).then(() => this.actor.setFlag(MOD, "data", snapshot));
     try { await this._saveChain; }
     catch (err) {
@@ -763,6 +793,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   static onAddPortrait() {
+    if (this.isWorkspace) return ui.notifications.warn("Token Atelier: Workspace has no portrait. Add art instead.");
     if (this.actor.img) this._addArt(this.actor.img);
   }
 
@@ -892,7 +923,7 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
       if (!window.confirm(`Restore Token Atelier settings from "${from}" to "${this.actor.name}"?\nYour current design will first be downloaded as a safety backup. The token PNG and portrait will not be changed.`)) return;
       // Download the current design BEFORE overwriting actor flags. Abort if backup fails.
       downloadBackup(this.actor, this.atelierData);
-      this.atelierData = restored;
+      this.atelierData = protectWorkspaceState(this.actor, restored);
       try { await this._save(); }
       catch (err) { this.atelierData = loadState(this.actor); throw err; }
       await this.render({ force: true });
@@ -1030,9 +1061,11 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
       const stem = `${slug(this.actor.name, "actor")}-${slug(art.label, "art")}`;
       const path = await this._uploadToken(blob, folder, stem, usedNames);
       const update = {};
-      if (st.applyToken) update["prototypeToken.texture.src"] = path;
-      if (st.applyPortrait) update.img = path;
-      if (Object.keys(update).length) await this.actor.update(update);
+      if (!this.isWorkspace) {
+        if (st.applyToken) update["prototypeToken.texture.src"] = path;
+        if (st.applyPortrait) update.img = path;
+        if (Object.keys(update).length) await this.actor.update(update);
+      }
       await this._save();
       ui.notifications.info(`Token Atelier: safely saved ${path}`);
     } catch (err) {
@@ -1100,11 +1133,8 @@ async function openAtelier(actor) {
     ui.notifications.warn("Token Atelier is available only to Game Masters.");
     return null;
   }
-  if (!actor) {
-    ui.notifications.warn("Token Atelier: select an actor first.");
-    return null;
-  }
   try {
+    actor ??= createWorkspaceActor();
     // AppV2 windows are indexed by string ID in Foundry v13/14.
     const id = `${MOD}-${actor.id}`;
     const existing = foundry.applications.instances.get(id);
@@ -1124,53 +1154,9 @@ async function openAtelier(actor) {
   }
 }
 
-/**
- * Open from the GM-only button in Foundry's left Scene Controls toolbar.
- * Prefer the currently selected token; otherwise prompt for an Actor.
- */
-let sceneControlOpening = false;
-async function openAtelierFromSceneControls() {
-  if (!isGM() || sceneControlOpening) return null;
-  sceneControlOpening = true;
-  try {
-    const tokenActor = globalThis.canvas?.tokens?.controlled?.find(t => t.actor?.isOwner)?.actor;
-    if (tokenActor) return await openAtelier(tokenActor);
-
-    const actors = (game.actors?.contents ?? []).filter(a => a.isOwner)
-      .sort((a, b) => a.name.localeCompare(b.name, game.i18n.lang));
-    if (!actors.length) {
-      ui.notifications.warn("Token Atelier: no editable actors found. Create an actor first.");
-      return null;
-    }
-
-    // Escape actor names because the picker is rendered as HTML.
-    const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-    })[c]);
-    const options = actors.map(a =>
-      `<option value="${escapeHTML(a.id)}">${escapeHTML(a.name)}</option>`
-    ).join("");
-    const selection = await foundry.applications.api.DialogV2.input({
-      window: { title: "Token Atelier — Choose Actor" },
-      content: `<div class="form-group"><label for="token-atelier-actor">Actor</label>
-        <select id="token-atelier-actor" name="actorId" autofocus>${options}</select></div>`,
-      ok: { label: "Open Token Atelier", icon: "fa-solid fa-palette" },
-      rejectClose: false
-    });
-    if (!selection?.actorId) return null;
-    const actor = game.actors.get(selection.actorId);
-    if (!actor?.isOwner) {
-      ui.notifications.warn("Token Atelier: the selected actor is no longer available.");
-      return null;
-    }
-    return await openAtelier(actor);
-  } catch (err) {
-    console.error(`${MOD} | Could not open from Scene Controls`, err);
-    ui.notifications.error("Token Atelier: couldn't open the actor selector. See F12 Console.");
-    return null;
-  } finally {
-    sceneControlOpening = false;
-  }
+/** Launch the saved standalone workspace immediately from Scene Controls. */
+function openAtelierFromSceneControls() {
+  return openAtelier();
 }
 
 /**

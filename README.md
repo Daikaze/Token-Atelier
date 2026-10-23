@@ -84,3 +84,10 @@ Back up your world before upgrading. The new global preset setting is empty unti
 - Clicking the palette icon immediately opens Token Atelier for a currently selected token's Actor. If no editable token is selected, a **Choose Actor** dialog lets the GM pick from world Actors instead.
 - An **Open Token Atelier** tool within the palette can reopen the chooser/editor while the palette remains active.
 - Existing Actor Sheet and Actors-sidebar entry points remain available. All stored art, presets, backups, and alignments are unchanged.
+
+## New in v0.2.7 — Direct Workspace Opening
+
+- The **Token Atelier palette** in the left Foundry Scene Controls toolbar opens a **standalone Workspace immediately**, without choosing an Actor or selecting a token.
+- The Workspace saves art, alignment, and options to the current GM User's `token-atelier.workspaceData` flag, not to any world Actor.
+- Add art, bulk import, use presets, backup/restore, and export safe non-overwriting PNGs. Workspace exports never update any Actor's token image or portrait.
+- Actor Sheet and Actors sidebar entry points still open a specific Actor's editor. Calling `game.modules.get("token-atelier").api.open()` opens Workspace; passing an Actor continues to work.

@@ -1,4 +1,12 @@
 <div class="tka-root">
+  {{#if workspace}}
+  <div class="tka-workspace-notice">
+    <i class="fa-solid fa-palette"></i>
+    <div><strong>Workspace — no actor needed</strong>
+      <p>Create tokens and export PNGs without changing a character. Workspace is saved for this GM. To edit a character, open Token Atelier from their Actor sheet.</p>
+    </div>
+  </div>
+  {{/if}}
   <div class="tka-left">
     <div class="tka-canvas-wrap">
       <canvas class="tka-canvas"></canvas>
@@ -38,11 +46,11 @@
       </ul>
       <div class="tka-row">
         <button type="button" data-action="add-art"><i class="fas fa-plus"></i> Add art</button>
-        <button type="button" data-action="add-portrait"><i class="fas fa-user"></i> Use portrait</button>
+        <button type="button" data-action="add-portrait" {{#if workspace}}disabled title="Workspace has no actor portrait"{{/if}}><i class="fas fa-user"></i> Use portrait</button>
       </div>
       <div class="tka-bulk-import">
         <h4>Bulk Import</h4>
-        <p class="tka-description">Add several art variants at once. Existing images and alignment stay unchanged. Up to 250 images per actor.</p>
+        <p class="tka-description">Add several art variants at once. Existing images and alignment stay unchanged. Up to 250 images per {{#if workspace}}workspace{{else}}actor{{/if}}.</p>
         <div class="tka-row">
           <button type="button" data-action="bulk-folder" title="Add all supported images in a Foundry Data folder (not subfolders)"><i class="fas fa-folder-open"></i> Import Foundry folder</button>
           <button type="button" data-action="bulk-upload" title="Choose multiple images on your computer, upload, and import"><i class="fas fa-images"></i> Upload multiple images</button>
@@ -118,7 +126,7 @@
 
     <section class="tka-backup">
       <h3>Safe Save &amp; Backup</h3>
-      <p class="tka-description">Exports use unique filenames instead of overwriting existing PNGs. Backups save this actor's Token Atelier settings as JSON.</p>
+      <p class="tka-description">Exports use unique filenames instead of overwriting existing PNGs. Backups save this {{#if workspace}}workspace's{{else}}actor's{{/if}} Token Atelier settings as JSON.</p>
       <div class="tka-row">
         <button type="button" data-action="backup-download"><i class="fas fa-download"></i> Download backup</button>
         <button type="button" data-action="backup-restore"><i class="fas fa-file-import"></i> Restore backup</button>
@@ -141,16 +149,16 @@
         <input type="text" data-bind="style.folder">
       </div>
       <div class="tka-field tka-check">
-        <label><input type="checkbox" data-bind="style.applyToken"> Set as the actor's token image</label>
+        <label><input type="checkbox" data-bind="style.applyToken" {{#if workspace}}disabled{{/if}}> Set as the actor's token image</label>
       </div>
       <div class="tka-field tka-check">
-        <label><input type="checkbox" data-bind="style.applyPortrait"> Also set as the actor's portrait</label>
+        <label><input type="checkbox" data-bind="style.applyPortrait" {{#if workspace}}disabled{{/if}}> Also set as the actor's portrait</label>
       </div>
       <div class="tka-row">
         <button type="button" class="tka-primary" data-action="export"><i class="fas fa-save"></i> Save selected token</button>
         <button type="button" data-action="export-all"><i class="fas fa-layer-group"></i> Export all arts</button>
       </div>
-      <p class="tka-description">Batch export creates PNGs only; it does not change the actor portrait or token image.</p>
+      <p class="tka-description">{{#if workspace}}Exports save PNGs without changing any Actor.{{else}}Batch export creates PNGs only; it does not change the actor portrait or token image.{{/if}}</p>
     </section>
   </div>
 </div>

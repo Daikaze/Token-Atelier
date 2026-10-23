@@ -51,3 +51,12 @@
 .token-atelier .tka-bulk-import { margin-top: 8px; border-top: 1px solid var(--color-border-dark-4, #555); padding-top: 4px; }
 .token-atelier .tka-bulk-import h4 { font-size: 13px; margin: 4px 0 2px; }
 .token-atelier .tka-bulk-import .tka-row button { line-height: 1.2; min-height: 34px; }
+
+/* Actor-free Workspace banner */
+.token-atelier .tka-root { flex-wrap: wrap; align-content: flex-start; }
+.token-atelier .tka-workspace-notice {
+  flex: 0 0 100%; box-sizing: border-box; display: flex; gap: 8px; align-items: flex-start;
+  padding: 8px 10px; font-size: 12px; border: 1px solid var(--color-border-dark-4, #555);
+  border-radius: 5px; background: var(--color-bg-option, rgba(120,120,120,.11));
+}
+.token-atelier .tka-workspace-notice p { margin: 2px 0 0; line-height: 1.35; opacity: .82; }
