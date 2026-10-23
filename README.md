@@ -77,3 +77,10 @@ Back up your world before upgrading. The new global preset setting is empty unti
 - Both options are **GM only**, preserve existing images, the selected art, border presets and shared/individual alignments, and save actor data once per import. A maximum of 250 images per actor matches the existing backup restore limit.
 - Bulk Import does **not** replace the actor portrait, token, or any exported PNG. Previously imported Foundry paths are skipped. You can still use **Export all arts** to render the tokens afterward.
 - If folder browsing or uploads fail, existing imported art is not removed, and the error is shown in Foundry notifications and the F12 console.
+
+## New in v0.2.6 — Left Toolbar Shortcut
+
+- Added a dedicated **Token Atelier** palette icon to the **left-hand Scene Controls toolbar** in Foundry VTT v14 (also supported in v13). The icon appears for GMs only.
+- Clicking the palette icon immediately opens Token Atelier for a currently selected token's Actor. If no editable token is selected, a **Choose Actor** dialog lets the GM pick from world Actors instead.
+- An **Open Token Atelier** tool within the palette can reopen the chooser/editor while the palette remains active.
+- Existing Actor Sheet and Actors-sidebar entry points remain available. All stored art, presets, backups, and alignments are unchanged.

@@ -1,0 +1,30 @@
+name: Token Atelier checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: node --check scripts/main.js
+      - name: Regression tests
+        run: node tests/logic.test.cjs
+      - name: Installer archive matches source
+        run: |
+          python3 - <<'PY'
+          import json, zipfile, pathlib
+          expected = ["module.json", "scripts/main.js", "styles/token-atelier.css", "templates/token-atelier.hbs", "lang/en.json", "README.md"]
+          with zipfile.ZipFile("dist/token-atelier.zip") as z:
+              assert z.testzip() is None
+              for path in expected:
+                  archive = z.read("token-atelier/" + path)
+                  source = pathlib.Path(path).read_bytes()
+                  assert archive == source, f"ZIP outdated: {path}"
+              assert json.loads(z.read("token-atelier/module.json"))["version"] == "0.2.6"
+          PY

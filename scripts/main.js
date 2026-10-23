@@ -1124,6 +1124,85 @@ async function openAtelier(actor) {
   }
 }
 
+/**
+ * Open from the GM-only button in Foundry's left Scene Controls toolbar.
+ * Prefer the currently selected token; otherwise prompt for an Actor.
+ */
+let sceneControlOpening = false;
+async function openAtelierFromSceneControls() {
+  if (!isGM() || sceneControlOpening) return null;
+  sceneControlOpening = true;
+  try {
+    const tokenActor = globalThis.canvas?.tokens?.controlled?.find(t => t.actor?.isOwner)?.actor;
+    if (tokenActor) return await openAtelier(tokenActor);
+
+    const actors = (game.actors?.contents ?? []).filter(a => a.isOwner)
+      .sort((a, b) => a.name.localeCompare(b.name, game.i18n.lang));
+    if (!actors.length) {
+      ui.notifications.warn("Token Atelier: no editable actors found. Create an actor first.");
+      return null;
+    }
+
+    // Escape actor names because the picker is rendered as HTML.
+    const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+    const options = actors.map(a =>
+      `<option value="${escapeHTML(a.id)}">${escapeHTML(a.name)}</option>`
+    ).join("");
+    const selection = await foundry.applications.api.DialogV2.input({
+      window: { title: "Token Atelier — Choose Actor" },
+      content: `<div class="form-group"><label for="token-atelier-actor">Actor</label>
+        <select id="token-atelier-actor" name="actorId" autofocus>${options}</select></div>`,
+      ok: { label: "Open Token Atelier", icon: "fa-solid fa-palette" },
+      rejectClose: false
+    });
+    if (!selection?.actorId) return null;
+    const actor = game.actors.get(selection.actorId);
+    if (!actor?.isOwner) {
+      ui.notifications.warn("Token Atelier: the selected actor is no longer available.");
+      return null;
+    }
+    return await openAtelier(actor);
+  } catch (err) {
+    console.error(`${MOD} | Could not open from Scene Controls`, err);
+    ui.notifications.error("Token Atelier: couldn't open the actor selector. See F12 Console.");
+    return null;
+  } finally {
+    sceneControlOpening = false;
+  }
+}
+
+/**
+ * Dedicated GM-only button in the left toolbar (not the right-side sidebar).
+ * v13/v14 getSceneControlButtons receives a keyed SceneControl record.
+ */
+Hooks.on("getSceneControlButtons", controls => {
+  if (!isGM() || !controls || Array.isArray(controls) || controls[MOD]) return;
+  const maxOrder = Math.max(0, ...Object.values(controls).map(c => Number(c.order) || 0));
+  controls[MOD] = {
+    name: MOD,
+    title: "TOKEN_ATELIER.Title",
+    icon: "fa-solid fa-palette",
+    order: maxOrder + 1,
+    visible: true,
+    onChange: (_event, active) => {
+      if (active) void openAtelierFromSceneControls();
+    },
+    tools: {
+      open: {
+        name: "open",
+        title: "TOKEN_ATELIER.Button",
+        icon: "fa-solid fa-user-pen",
+        order: 0,
+        button: true,
+        visible: true,
+        onChange: () => { void openAtelierFromSceneControls(); }
+      }
+    }
+  };
+});
+
 Hooks.once("init", () => {
   game.settings.register(MOD, "defaultFolder", {
     name: "TOKEN_ATELIER.Setting.Folder.Name",

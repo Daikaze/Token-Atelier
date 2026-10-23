@@ -9,6 +9,7 @@ const code = fs.readFileSync(source, 'utf8');
 const flags = new Map();
 const settings = new Map([['defaultFolder','tokens'], ['borderPresets',[]]]);
 const notifications = {info:[],warn:[],error:[]};
+const dialogInputs = [];
 const uploads = [];
 const existing = new Map([['tokens',new Set(['hero-smile.png'])]]);
 let browsable = true;
@@ -55,19 +56,20 @@ filePicker.implementation={
 };
 const ctx={
   console,
+  canvas:{tokens:{controlled:[]}},
   Blob,File:MockFile,Image:MockImage,URL:{createObjectURL:blob=>{savedBackups.push(blob);return `blob:backup-${savedBackups.length}`;},revokeObjectURL(){}},
   setTimeout: (cb,ms) => ms===30000 ? 99999 : globalThis.setTimeout(cb,ms),
   clearTimeout: id => globalThis.clearTimeout(id),
   window:{confirm:()=>confirmReturn},
   document:{body:{appendChild(){}},createElement:type=> type==='canvas' ? createCanvas() : {click(){},remove(){},set href(v){},set download(v){}}},
   ui:{notifications:Object.fromEntries(['info','warn','error'].map(k=>[k,s=>notifications[k].push(s)]))},
-  foundry:{applications:{api:{ApplicationV2:MockApp,HandlebarsApplicationMixin:Base=>Base},apps:{FilePicker:filePicker},instances:new Map()},utils:{deepClone:copies,randomID:()=>`id${++idCounter}`,mergeObject:(a,b)=>({...a,...b,style:{...a.style,...b.style}}),getProperty:(o,p)=>p.split('.').reduce((o,k)=>o?.[k],o),setProperty:(o,p,v)=>{let parts=p.split('.');let obj=o;while(parts.length>1)obj=obj[parts.shift()];obj[parts[0]]=v;},getRoute:p=>p}},
-  game:{user:{get isGM(){return gm},can:()=>true},settings:{get(_m,k){return copies(settings.get(k))},async set(_m,k,v){settings.set(k,copies(v));return v},register(_m,k,opts){if(!settings.has(k))settings.set(k,opts.default)}},modules:new Map([['token-atelier',{api:null}]]),i18n:{localize:s=>s},actors:{get:id=>id===actor.id?actor:null}},
+  foundry:{applications:{api:{ApplicationV2:MockApp,HandlebarsApplicationMixin:Base=>Base,DialogV2:{async input(options){dialogInputs.push(options);return {actorId:actor.id};}}},apps:{FilePicker:filePicker},instances:new Map()},utils:{deepClone:copies,randomID:()=>`id${++idCounter}`,mergeObject:(a,b)=>({...a,...b,style:{...a.style,...b.style}}),getProperty:(o,p)=>p.split('.').reduce((o,k)=>o?.[k],o),setProperty:(o,p,v)=>{let parts=p.split('.');let obj=o;while(parts.length>1)obj=obj[parts.shift()];obj[parts[0]]=v;},getRoute:p=>p}},
+  game:{user:{get isGM(){return gm},can:()=>true},settings:{get(_m,k){return copies(settings.get(k))},async set(_m,k,v){settings.set(k,copies(v));return v},register(_m,k,opts){if(!settings.has(k))settings.set(k,opts.default)}},modules:new Map([['token-atelier',{api:null}]]),i18n:{localize:s=>s},actors:{contents:[actor],get:id=>id===actor.id?actor:null}},
   Hooks:{once:(k,cb)=>hooks[k]=cb,on:(k,cb)=>hooks[k]=cb},
 };
 vm.createContext(ctx);
 vm.runInContext('String.prototype.slugify = function(){return this.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")};',ctx);
-vm.runInContext(code + '\n;globalThis.TEST = {TokenAtelierApp,defaultState,restoredActorData,nextAvailableName,existingFilenames,planArtImport,uniqueImageFilename,isImportableImage};',ctx);
+vm.runInContext(code + '\n;globalThis.TEST = {TokenAtelierApp,defaultState,restoredActorData,nextAvailableName,existingFilenames,planArtImport,uniqueImageFilename,isImportableImage,openAtelierFromSceneControls};',ctx);
 const {TokenAtelierApp: App, defaultState, restoredActorData}=ctx.TEST;
 const tasks=[];
 function test(label,cb){tasks.push([label,cb]);}
@@ -85,6 +87,41 @@ test('Init registers old and new settings, GM-only API, and old actor flag data 
   gm=false;
   assert.throws(()=>new App(actor),/restricted/);
   assert.equal(await ctx.game.modules.get('token-atelier').api.open(actor),null);
+  gm=true;
+});
+
+test('Left toolbar control is GM-only; selected token opens directly, otherwise an actor picker',async()=>{
+  const makeControls=()=>({tokens:{name:'tokens',order:1,tools:{}}});
+  gm=false;
+  const denied=makeControls();
+  hooks.getSceneControlButtons(denied);
+  assert.equal(denied['token-atelier'],undefined);
+  gm=true;
+
+  const controls=makeControls();
+  hooks.getSceneControlButtons(controls);
+  const control=controls['token-atelier'];
+  assert.ok(control);
+  assert.equal(control.visible,true);
+  assert.equal(control.icon,'fa-solid fa-palette');
+  assert.equal(control.tools.open.button,true);
+  assert.equal(typeof control.onChange,'function');
+  assert.equal(typeof control.tools.open.onChange,'function');
+  hooks.getSceneControlButtons(controls);
+  assert.equal(Object.keys(controls).filter(k=>k==='token-atelier').length,1);
+
+  const beforeDialogs=dialogInputs.length;
+  ctx.canvas.tokens.controlled=[{actor}];
+  assert.ok((await ctx.TEST.openAtelierFromSceneControls()) instanceof App);
+  assert.equal(dialogInputs.length,beforeDialogs);
+
+  ctx.canvas.tokens.controlled=[];
+  assert.ok((await ctx.TEST.openAtelierFromSceneControls()) instanceof App);
+  assert.equal(dialogInputs.length,beforeDialogs+1);
+  assert.match(dialogInputs.at(-1).content,/name="actorId"/);
+
+  gm=false;
+  assert.equal(await ctx.TEST.openAtelierFromSceneControls(),null);
   gm=true;
 });
 

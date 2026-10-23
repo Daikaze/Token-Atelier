@@ -2,7 +2,7 @@
   "id": "token-atelier",
   "title": "Token Atelier",
   "description": "A token maker for actors. Align one piece of art, and the alignment is remembered so alternate art of the same character (other expressions, outfits) lines up the same way.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "compatibility": {
     "minimum": "13",
     "verified": "14"
