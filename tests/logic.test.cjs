@@ -10,6 +10,7 @@ const flags = new Map();
 const settings = new Map([['defaultFolder','tokens'], ['borderPresets',[]]]);
 const notifications = {info:[],warn:[],error:[]};
 const dialogInputs = [];
+const userFlags = new Map();
 const uploads = [];
 const existing = new Map([['tokens',new Set(['hero-smile.png'])]]);
 let browsable = true;
@@ -64,7 +65,7 @@ const ctx={
   document:{body:{appendChild(){}},createElement:type=> type==='canvas' ? createCanvas() : {click(){},remove(){},set href(v){},set download(v){}}},
   ui:{notifications:Object.fromEntries(['info','warn','error'].map(k=>[k,s=>notifications[k].push(s)]))},
   foundry:{applications:{api:{ApplicationV2:MockApp,HandlebarsApplicationMixin:Base=>Base,DialogV2:{async input(options){dialogInputs.push(options);return {actorId:actor.id};}}},apps:{FilePicker:filePicker},instances:new Map()},utils:{deepClone:copies,randomID:()=>`id${++idCounter}`,mergeObject:(a,b)=>({...a,...b,style:{...a.style,...b.style}}),getProperty:(o,p)=>p.split('.').reduce((o,k)=>o?.[k],o),setProperty:(o,p,v)=>{let parts=p.split('.');let obj=o;while(parts.length>1)obj=obj[parts.shift()];obj[parts[0]]=v;},getRoute:p=>p}},
-  game:{user:{get isGM(){return gm},can:()=>true},settings:{get(_m,k){return copies(settings.get(k))},async set(_m,k,v){settings.set(k,copies(v));return v},register(_m,k,opts){if(!settings.has(k))settings.set(k,opts.default)}},modules:new Map([['token-atelier',{api:null}]]),i18n:{localize:s=>s},actors:{contents:[actor],get:id=>id===actor.id?actor:null}},
+  game:{user:{id:'gm42',get isGM(){return gm},can:()=>true,getFlag(_m,k){return copies(userFlags.get(k) ?? null)},async setFlag(_m,k,v){userFlags.set(k,copies(v));return v},settings:{get(_m,k){return copies(settings.get(k))},async set(_m,k,v){settings.set(k,copies(v));return v},register(_m,k,opts){if(!settings.has(k))settings.set(k,opts.default)}},modules:new Map([['token-atelier',{api:null}]]),i18n:{localize:s=>s},actors:{contents:[actor],get:id=>id===actor.id?actor:null}},
   Hooks:{once:(k,cb)=>hooks[k]=cb,on:(k,cb)=>hooks[k]=cb},
 };
 vm.createContext(ctx);
@@ -90,38 +91,70 @@ test('Init registers old and new settings, GM-only API, and old actor flag data 
   gm=true;
 });
 
-test('Left toolbar control is GM-only; selected token opens directly, otherwise an actor picker',async()=>{
+test('Left palette opens a separate persistent workspace immediately without selecting an actor',async()=>{
   const makeControls=()=>({tokens:{name:'tokens',order:1,tools:{}}});
   gm=false;
-  const denied=makeControls();
-  hooks.getSceneControlButtons(denied);
+  const denied=makeControls(); hooks.getSceneControlButtons(denied);
   assert.equal(denied['token-atelier'],undefined);
+  assert.equal(await ctx.TEST.openAtelierFromSceneControls(),null);
   gm=true;
 
-  const controls=makeControls();
-  hooks.getSceneControlButtons(controls);
-  const control=controls['token-atelier'];
-  assert.ok(control);
-  assert.equal(control.visible,true);
-  assert.equal(control.icon,'fa-solid fa-palette');
-  assert.equal(control.tools.open.button,true);
-  assert.equal(typeof control.onChange,'function');
-  assert.equal(typeof control.tools.open.onChange,'function');
+  const controls=makeControls(); hooks.getSceneControlButtons(controls);
+  const button=controls['token-atelier'];
+  assert.equal(button.visible,true);
+  assert.equal(button.icon,'fa-solid fa-palette');
+  assert.equal(button.tools.open.button,true);
+  assert.equal(typeof button.tools.open.onChange,'function');
   hooks.getSceneControlButtons(controls);
   assert.equal(Object.keys(controls).filter(k=>k==='token-atelier').length,1);
 
-  const beforeDialogs=dialogInputs.length;
+  const dialogCount=dialogInputs.length, actorFlags=copies(flags.get('data'));
   ctx.canvas.tokens.controlled=[{actor}];
-  assert.ok((await ctx.TEST.openAtelierFromSceneControls()) instanceof App);
-  assert.equal(dialogInputs.length,beforeDialogs);
+  const selected=await ctx.TEST.openAtelierFromSceneControls();
+  assert.equal(selected.isWorkspace,true);
+  assert.equal(selected.actor.name,'Workspace');
+  assert.notEqual(selected.actor,actor);
 
   ctx.canvas.tokens.controlled=[];
-  assert.ok((await ctx.TEST.openAtelierFromSceneControls()) instanceof App);
-  assert.equal(dialogInputs.length,beforeDialogs+1);
-  assert.match(dialogInputs.at(-1).content,/name="actorId"/);
+  const noToken=await ctx.TEST.openAtelierFromSceneControls();
+  assert.equal(noToken.isWorkspace,true);
+  assert.equal(dialogInputs.length,dialogCount);
+  assert.deepEqual(flags.get('data'),actorFlags);
 
+  // No Actors in the world is now supported too.
+  const savedActors=ctx.game.actors.contents;
+  ctx.game.actors.contents=[];
+  assert.equal((await ctx.TEST.openAtelierFromSceneControls()).isWorkspace,true);
+  ctx.game.actors.contents=savedActors;
+
+  noToken.atelierData.style.ringColor='#123abc';
+  noToken.atelierData.style.applyToken=true;
+  noToken.atelierData.style.applyPortrait=true;
+  await noToken._save();
+  assert.equal(userFlags.get('workspaceData').style.ringColor,'#123abc');
+  assert.equal(userFlags.get('workspaceData').style.applyToken,false);
+  assert.equal(userFlags.get('workspaceData').style.applyPortrait,false);
+  assert.deepEqual(flags.get('data'),actorFlags);
+  const reopened=await ctx.game.modules.get('token-atelier').api.open();
+  assert.equal(reopened.isWorkspace,true);
+  assert.equal(reopened.atelierData.style.ringColor,'#123abc');
+
+  const uploadsBefore=uploads.length, updatesBefore=actor.updates.length;
+  reopened.canvas=createCanvas();
+  reopened._img={naturalWidth:100,naturalHeight:100};
+  reopened.atelierData.arts=[{id:'work-art',src:'hero.png',label:'Portrait',linked:false,tf:{ox:0,oy:0,scale:1,rot:0}}];
+  reopened.atelierData.active='work-art';
+  reopened.atelierData.style.folder='tokens';
+  reopened.atelierData.style.applyToken=true;
+  reopened.atelierData.style.applyPortrait=true;
+  await reopened._export();
+  assert.equal(uploads.length,uploadsBefore+1);
+  assert.equal(actor.updates.length,updatesBefore);
+  assert.equal(reopened.atelierData.style.applyToken,false);
+  assert.equal(reopened.atelierData.style.applyPortrait,false);
+  assert.deepEqual(flags.get('data'),actorFlags);
   gm=false;
-  assert.equal(await ctx.TEST.openAtelierFromSceneControls(),null);
+  assert.equal(await ctx.game.modules.get('token-atelier').api.open(),null);
   gm=true;
 });
 
@@ -219,6 +252,8 @@ test('All HTML action buttons map to defined ApplicationV2 actions',async()=>{
     assert.equal(typeof App.DEFAULT_OPTIONS.actions[action],'function',`Missing action: ${action}`);
   }
   assert.ok(template.includes('name="restoreBackupFile"'));
+  assert.ok(template.includes('tka-workspace-notice'));
+  assert.ok(template.includes('data-bind="style.applyToken" {{#if workspace}}disabled{{/if}}'));
 });
 
 test('A running export blocks a second export, and player cannot export with open editor',async()=>{
