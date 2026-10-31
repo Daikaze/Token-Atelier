@@ -26,5 +26,5 @@ jobs:
                   archive = z.read("token-atelier/" + path)
                   source = pathlib.Path(path).read_bytes()
                   assert archive == source, f"ZIP outdated: {path}"
-              assert json.loads(z.read("token-atelier/module.json"))["version"] == "0.2.7"
+              assert json.loads(z.read("token-atelier/module.json"))["version"] == "0.2.8"
           PY

@@ -7,19 +7,23 @@
     </div>
   </div>
   {{/if}}
-  <div class="tka-left">
+  <div class="tka-left" aria-label="Token preview and image alignment">
+    <div class="tka-panel-heading">
+      <h2>Token Preview</h2>
+      <small>Drag to reposition · Scroll to zoom</small>
+    </div>
     <div class="tka-canvas-wrap">
       <canvas class="tka-canvas"></canvas>
     </div>
-    <p class="tka-hint">Drag to move. Scroll to zoom.</p>
+    <p class="tka-hint">Changes to the preview save automatically.</p>
 
     <div class="tka-field">
-      <label>Zoom</label>
-      <input type="range" name="scale" min="0.05" max="6" step="0.001">
+      <label for="tka-zoom">Zoom</label>
+      <input id="tka-zoom" type="range" name="scale" min="0.05" max="6" step="0.001">
     </div>
     <div class="tka-field">
-      <label>Rotation</label>
-      <input type="range" name="rot" min="-180" max="180" step="0.5">
+      <label for="tka-rotation">Rotation</label>
+      <input id="tka-rotation" type="range" name="rot" min="-180" max="180" step="0.5">
     </div>
     <div class="tka-field tka-check">
       <label><input type="checkbox" name="linked"> Use the shared alignment for this art</label>
@@ -30,12 +34,13 @@
     </div>
   </div>
 
-  <div class="tka-right">
+  <div class="tka-right" aria-label="Token Atelier settings">
+    <div class="tka-panel-heading"><h2>Token Settings</h2><small>Appearance, presets and export</small></div>
     <section>
       <h3>Art</h3>
       <ul class="tka-arts">
         {{#each arts}}
-        <li class="tka-art{{#if active}} active{{/if}}" data-action="select-art" data-id="{{id}}">
+        <li class="tka-art{{#if active}} active{{/if}}" data-action="select-art" data-id="{{id}}" role="button" tabindex="0" aria-label="Select art {{label}}" {{#if active}}aria-current="true"{{/if}}>
           <img src="{{thumb}}" alt="">
           <input class="tka-label" type="text" value="{{label}}">
           <button type="button" data-action="remove-art" title="Remove"><i class="fas fa-trash"></i></button>
