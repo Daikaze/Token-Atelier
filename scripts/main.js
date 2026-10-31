@@ -317,8 +317,15 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   static DEFAULT_OPTIONS = {
     classes: ["token-atelier"],
-    position: { width: 780, height: "auto" },
-    window: { icon: "fa-solid fa-user-circle", resizable: false },
+    // ApplicationV2 owns the title bar, double-click minimize, resize, and z-order.
+    // Explicit numeric height avoids unbounded "auto" windows on small displays.
+    position: { width: 1030, height: 790 },
+    window: {
+      frame: true,
+      icon: "fa-solid fa-user-circle",
+      minimizable: true,
+      resizable: true
+    },
     actions: {
       "select-art": TokenAtelierApp.onSelectArt,
       "add-art": TokenAtelierApp.onAddArt,
@@ -407,6 +414,14 @@ class TokenAtelierApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   _onRender(context, options) {
     const root = this.element;
+    // Make selectable image rows accessible without changing action handlers.
+    root.querySelectorAll(".tka-art[data-action='select-art']").forEach(row => {
+      row.addEventListener("keydown", event => {
+        if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        row.click();
+      });
+    });
     this.canvas = root.querySelector("canvas");
     this.canvas.width = this.canvas.height = this.atelierData.style.size;
 
