@@ -83,8 +83,8 @@ test('Native V14 window can be resized and uses Foundry frame controls',()=>{
   assert.ok(Number.isInteger(options.position.width));
   assert.ok(Number.isInteger(options.position.height));
   const css=fs.readFileSync(`${__dirname}/../styles/token-atelier.css`,'utf8');
-  assert.match(css,/container:\\s*token-atelier\\s*\\/\\s*inline-size/);
-  assert.match(css,/@container token-atelier \\(max-width:/);
+  assert.ok(css.includes('container: token-atelier / inline-size'));
+  assert.ok(css.includes('@container token-atelier (max-width:'));
   assert.ok(!css.includes('.window-app '),'Never modify all Foundry windows');
   assert.ok(!css.includes('position: fixed'),'Foundry manages application placement');
   const template=fs.readFileSync(`${__dirname}/../templates/token-atelier.hbs`,'utf8');
