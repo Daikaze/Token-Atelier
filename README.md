@@ -1,5 +1,13 @@
 # Token Atelier
 
+## v0.2.8 — Native responsive Foundry UI
+- Uses Foundry ApplicationV2 native title bar, double-click minimization, and edge resizing.
+- Responsive two-panel preview/settings layout with a square canvas that scales with the window.
+- Form controls and section panels use Foundry theme colors; no global CSS selectors.
+- Art rows can be selected with Enter or Space when focused.
+- Existing presets, image alignments, exports, backups and GM permissions are unchanged.
+
+
 A **GM-only** token maker for Foundry VTT v13 and v14 (built for the dnd5e system, ApplicationV2). This repository targets v13/v14. Align one piece of art and the alignment is remembered, so alternate art of the same character lines up the same way.
 
 ## Install directly from GitHub (recommended)
