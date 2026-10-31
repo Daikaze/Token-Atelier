@@ -75,6 +75,23 @@ const {TokenAtelierApp: App, defaultState, restoredActorData}=ctx.TEST;
 const tasks=[];
 function test(label,cb){tasks.push([label,cb]);}
 
+test('Native V14 window can be resized and uses Foundry frame controls',()=>{
+  const options = App.DEFAULT_OPTIONS;
+  assert.equal(options.window.frame,true);
+  assert.equal(options.window.minimizable,true);
+  assert.equal(options.window.resizable,true);
+  assert.ok(Number.isInteger(options.position.width));
+  assert.ok(Number.isInteger(options.position.height));
+  const css=fs.readFileSync(`${__dirname}/../styles/token-atelier.css`,'utf8');
+  assert.match(css,/container:\\s*token-atelier\\s*\\/\\s*inline-size/);
+  assert.match(css,/@container token-atelier \\(max-width:/);
+  assert.ok(!css.includes('.window-app '),'Never modify all Foundry windows');
+  assert.ok(!css.includes('position: fixed'),'Foundry manages application placement');
+  const template=fs.readFileSync(`${__dirname}/../templates/token-atelier.hbs`,'utf8');
+  assert.match(template,/tka-panel-heading/);
+  assert.match(template,/tabindex="0"/);
+});
+
 test('Init registers old and new settings, GM-only API, and old actor flag data loads',async()=>{
   hooks.init();
   assert.equal(typeof ctx.game.modules.get('token-atelier').api.open,'function');
